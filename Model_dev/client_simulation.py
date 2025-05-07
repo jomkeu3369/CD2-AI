@@ -24,10 +24,7 @@ async def run_test_simulation():
                 for crit_res in data.get('criteria_results', []):
                     print(f"    - 기준: {crit_res['criterion']}, 원점수: {crit_res['raw_bart_score']:.2f}, RL가중치: {crit_res['rl_weight']:.2f}, 추천점수: {crit_res['recommend_score']}, 최종점수: {crit_res['final_score']:.2f}")
 
-
-        except httpx.HTTPStatusError as e:
-            print(f"초기 평가 중 오류 발생: {e.response.status_code} - {e.response.text}")
-        except httpx.RequestError as e:
+        except Exception as e:
             print(f"초기 평가 중 요청 오류: {e}")
         
         print("\n--- 무작위 피드백 제출 시뮬레이션 ---")
@@ -42,10 +39,9 @@ async def run_test_simulation():
                 )
                 feedback_response.raise_for_status()
                 print(f"피드백 결과: {feedback_response.json().get('message')}")
-            except httpx.HTTPStatusError as e:
-                print(f"피드백 제출 중 오류 발생 ({criterion_to_feedback}): {e.response.status_code} - {e.response.text}")
-            except httpx.RequestError as e:
+            except Exception as e:
                  print(f"피드백 제출 중 요청 오류 ({criterion_to_feedback}): {e}")
+
             await asyncio.sleep(0.1)
 
         print(f"\n--- 피드백 후 재평가 수행: '{sample_prompt}' ---")
@@ -58,9 +54,7 @@ async def run_test_simulation():
                 print(f"  카테고리 [{category}]: 평균 점수 {data.get('average_score', 'N/A'):.4f}")
                 for crit_res in data.get('criteria_results', []):
                     print(f"    - 기준: {crit_res['criterion']}, 원점수: {crit_res['raw_bart_score']:.2f}, RL가중치: {crit_res['rl_weight']:.2f}, 추천점수: {crit_res['recommend_score']}, 최종점수: {crit_res['final_score']:.2f}")
-        except httpx.HTTPStatusError as e:
-            print(f"재평가 중 오류 발생: {e.response.status_code} - {e.response.text}")
-        except httpx.RequestError as e:
+        except Exception as e:
             print(f"재평가 중 요청 오류: {e}")
 
 if __name__ == "__main__":
