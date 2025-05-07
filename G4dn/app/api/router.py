@@ -1,9 +1,10 @@
 import os
 import httpx
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
-from app.schema.schema import OllamaPromptRequest, OllamaGenerateResponse, BartClassifyRequest, BartClassifyResponse, OptimizeResponse, OptimizeRequest
+from app.api.crud import status_manager
+from app.api.schema import OllamaPromptRequest, OllamaGenerateResponse, BartClassifyRequest, BartClassifyResponse, OptimizeResponse, OptimizeRequest
 from app.models.model import graph
 
 router = APIRouter()
@@ -115,6 +116,40 @@ async def optimize_prompt(request: OptimizeRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"서버 내부 오류 발생: {type(e).__name__}")
 
+@router.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, token: str = None):
+    await status_manager.lang_graph.init_workflow(websocket)
+    await websocket.accept()
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await status_manager.handle_message(websocket, data)
+    except:
+        del status_manager.lang_graph.workflows[websocket]
+        del status_manager.lang_graph.states[websocket]
+
 @router.get("/")
 def read_root():
     return {"message": "FastAPI service running (Ollama Proxy & BART Classifier)"}
+
+"""
+    1. 웹소켓 연결
+
+    2. 토큰 검증   
+        [ 방법 ]
+            1. 백엔드에 토큰을 전송하여 검증 후 결과를 받음 (True, False)
+            2. 인공지능 서버에서 토큰을 똑같이 검증함
+
+    3. 대화
+        [ 쿼리 종류 ]
+            1. 프롬프트 최적화 최초 프롬프트
+            2. human in the loop
+
+        [ 구별 방법 ]
+            1. 웹 소켓 최초 연결 시 - 프롬프트 최적화 최초 프롬프트로 인식
+            2. 이후 human in the loop 인터럽트 발생 시 - 내부 status를 변경하여 human in the loop 메시지를 받을 준비를 함
+            3. 이후 들어오는 메시지는 human in the loop 메시지
+            4. 만약 도중에 웹 소켓 연결이 끊길 시 - human in the loop 종료 및 프롬프팅 생성 종료 -> 재연결 시 1번 과정으로 이동
+
+"""

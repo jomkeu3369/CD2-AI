@@ -14,6 +14,7 @@ DEEPL_API_KEY = os.getenv("DEEPL_API_KEY")
 OLLAMA_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 client = httpx.AsyncClient()
 
+
 async def trans_en(text:str) -> str:
     translator = deepl.Translator(DEEPL_API_KEY)
     result = translator.translate_text(text, target_lang="en-us")
@@ -53,6 +54,7 @@ async def evaluate_text(text:str, criteria_dict:dict) -> dict:
 
 async def analyze_prompt(state: MainState) -> MainState:
     from app.models.classifiers import classifier
+    
     user_prompt = state["original_prompt"]
 
     if classifier is None:

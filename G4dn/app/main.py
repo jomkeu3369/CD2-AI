@@ -4,7 +4,7 @@ sys.dont_write_bytecode = True
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.router import router
+from G4dn.app.api import router
 from log import setup_logging, handle_exception
 
 logger = setup_logging()
