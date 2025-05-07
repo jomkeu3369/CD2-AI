@@ -58,6 +58,4 @@ async def run_test_simulation():
             print(f"재평가 중 요청 오류: {e}")
 
 if __name__ == "__main__":
-    print("테스트 클라이언트 시뮬레이션을 시작합니다...")
-    print(f"먼저 'python test_main_api.py'를 실행하여 테스트 서버를 시작해주세요.")
     asyncio.run(run_test_simulation())

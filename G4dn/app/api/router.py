@@ -121,6 +121,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = None):
     await status_manager.lang_graph.init_workflow(websocket)
     await websocket.accept()
 
+    # 토큰 검증 시스템
+    # 백엔드에 토큰을 전송하여 검증
+
     try:
         while True:
             data = await websocket.receive_text()
