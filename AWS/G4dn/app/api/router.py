@@ -133,6 +133,9 @@ async def websocket_optimize_endpoint(websocket: WebSocket, token: Optional[str]
     # 연결 시점에 한 번만 호출되도록 하는 것이 좋습니다.
     # status_manager.lang_graph.init_workflow(websocket) # 필요시 crud.py의 connect 같은 메서드로 이동 고려
 
+    # 토큰 검증 시스템
+    # 백엔드에 토큰을 전송하여 검증
+
     try:
         while True:
             # 클라이언트로부터 원본 프롬프트를 텍스트 형태로 받습니다.
