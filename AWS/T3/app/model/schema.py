@@ -1,3 +1,41 @@
+from typing import TypedDict, Dict, Any, List, Optional
+
+
+class CriterionResult(TypedDict):
+    criterion: str
+    criterion_en: str
+    score: float
+    evaluation: str
+
+class CategoryEvaluation(TypedDict):
+    criteria_results: List[CriterionResult]  
+    average_score: float
+
+EvaluationData = Dict[str, CategoryEvaluation]
+
+class MainState(TypedDict):
+    initial_prompt: str                                 # 초기 프롬프트
+    translated_prompt: Optional[str]                   # 영어로 번역된 프롬프트
+    optimized_prompt: Optional[str]                     # 최적화된 프롬프트 (결과)
+    
+    is_completed: bool                                  # 종료 상태 여부
+    
+    evaluation_data: Dict[str, Any]                     # 프롬프트 평가 데이터
+    final_evaluation_data: Optional[Dict[str, Any]]     # 최종 프롬프트 평가 데이터 (2차 평가)
+    improvement_suggestions: Dict[str, str]             # 프롬프트 보완 데이터
+    
+    needs_web_search: bool                              # 웹 검색 여부
+    web_search_data: Optional[List[Dict[str, Any]]]     # 웹 검색 데이터
+    
+    has_file_upload: bool                               # 파일 업로드 여부
+    uploaded_files: Optional[List[Dict[str, Any]]]      # 파일 업로드 데이터
+    
+    model: str                                          # 사용할 모델 이름
+
+    topic: str                                          # 주제
+
+    retry_count: int                                     # 재시도 횟수
+
 criteria = {
     "명확성": [
         ("문장이 명확한가?", "is clear and unambiguous"),

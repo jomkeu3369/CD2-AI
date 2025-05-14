@@ -25,8 +25,6 @@ services:
       context: .
     ports:
       - "8000:8080"
-    depends_on:
-       - ollama
     env_file:
       - .env
     networks:

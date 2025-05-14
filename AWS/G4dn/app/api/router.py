@@ -1,11 +1,15 @@
 import os
 import httpx
+import asyncio
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
 
 from app.api.crud import status_manager
 from app.api.schema import OllamaPromptRequest, OllamaGenerateResponse, BartClassifyRequest, BartClassifyResponse, OptimizeResponse, OptimizeRequest
 from app.models.model import graph
+
+from starlette.websockets import WebSocketState
+from typing import Optional, Literal
 
 router = APIRouter()
 
@@ -116,19 +120,47 @@ async def optimize_prompt(request: OptimizeRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"서버 내부 오류 발생: {type(e).__name__}")
 
+
 @router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket, token: str = None):
-    await status_manager.lang_graph.init_workflow(websocket)
+async def websocket_optimize_endpoint(websocket: WebSocket, token: Optional[str] = None):
+    # 실제 운영 환경에서는 토큰 검증 로직이 필요합니다.
+    # 예: if not token or not await is_valid_token(token): # is_valid_token 함수는 별도 구현 필요
+    #         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+    #         return
+
     await websocket.accept()
+    # LangGraphManager의 상태 초기화는 ConnectionManager 내부에서 관리하거나,
+    # 연결 시점에 한 번만 호출되도록 하는 것이 좋습니다.
+    # status_manager.lang_graph.init_workflow(websocket) # 필요시 crud.py의 connect 같은 메서드로 이동 고려
 
     try:
         while True:
-            data = await websocket.receive_text()
-            await status_manager.handle_message(websocket, data)
-    except:
-        del status_manager.lang_graph.workflows[websocket]
-        del status_manager.lang_graph.states[websocket]
+            # 클라이언트로부터 원본 프롬프트를 텍스트 형태로 받습니다.
+            original_prompt = await websocket.receive_text()
+            
+            # app.api.crud.ConnectionManager의 process_workflow를 호출하여 로직을 처리하고,
+            # 해당 함수 내에서 웹소켓으로 스트리밍 응답을 보냅니다.
+            await status_manager.process_workflow(websocket, original_prompt)
+            
+            # 현재 구현은 하나의 프롬프트 처리 후 다음 프롬프트를 기다립니다.
+            # 만약 한 번의 최적화 후 연결을 종료하고 싶다면, 클라이언트 또는 서버에서
+            # 특정 조건 하에 연결을 닫는 로직이 추가되어야 합니다.
 
+    except WebSocketDisconnect:
+        print(f"Client {websocket.client} disconnected from /ws/optimize/")
+        status_manager.cleanup_connection(websocket) # 연결 종료 시 리소스 정리
+    except Exception as e:
+        error_message = f"Unexpected WebSocket error in /ws/optimize/: {str(e)}"
+        print(error_message)
+        # 클라이언트에게 에러 알림 (이미 연결이 끊겼을 수도 있음)
+        if websocket.client_state != WebSocketState.DISCONNECTED:
+            try:
+                await websocket.send_json({"type": "error", "message": error_message})
+                await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+            except Exception: # send_json이나 close 중 에러 발생 가능성
+                pass 
+        status_manager.cleanup_connection(websocket) # 리소스 정리
+        
 @router.get("/")
 def read_root():
     return {"message": "FastAPI service running (Ollama Proxy & BART Classifier)"}
@@ -151,5 +183,24 @@ def read_root():
             2. 이후 human in the loop 인터럽트 발생 시 - 내부 status를 변경하여 human in the loop 메시지를 받을 준비를 함
             3. 이후 들어오는 메시지는 human in the loop 메시지
             4. 만약 도중에 웹 소켓 연결이 끊길 시 - human in the loop 종료 및 프롬프팅 생성 종료 -> 재연결 시 1번 과정으로 이동
+
+"""
+
+
+"""
+    T3 인스턴스의 모델과의 차이점
+
+    1. 로컬 모델 구동 여부
+        1. G4DN 인스턴스는 로컬 모델을 사용
+        2. T3 인스턴스는 API만 사용
+
+    2. 제로샷 모델 사용 여부
+        1. G4DN 인스턴스는 facebook/bart 모델 사용
+        2. T3 인스턴스에서는 LLM-as-a-judge 방식을 사용해 평가
+
+        * 두 인스턴스의 평가 데이터는 다를 수 있음
+        * 속도 측면에서는 T3가 압도적
+
+        => 차라리 G4DN에서 모델 스왑을 하지 말고 LLM-as-a-judge 방식으로 통일하는 것은 어떤가?
 
 """

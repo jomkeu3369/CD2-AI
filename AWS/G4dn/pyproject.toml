@@ -25,6 +25,7 @@ ipython = "^9.1.0"
 sse-starlette = "^2.2.1"
 pydantic = "^2.11.3"
 rich = "^14.0.0"
+huggingface-hub = {extras = ["hf-xet"], version = "^0.31.1"}
 
 
 [build-system]

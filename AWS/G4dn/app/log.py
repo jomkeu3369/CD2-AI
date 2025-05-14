@@ -6,7 +6,7 @@ from rich.logging import RichHandler
 RICH_FORMAT = "[%(filename)s:%(lineno)s] >> %(message)s"
 FILE_HANDLER_FORMAT = "[%(asctime)s] %(levelname)s [%(filename)s:%(funcName)s:%(lineno)s] >> %(message)s"
 
-LOG_PATH = os.path.join(os.path.join(os.getcwd(), "files") , "logs")
+LOG_PATH = os.path.join(os.getcwd(), "app", "logs")
 
 def setup_logging() -> logging.Logger:
     logging.basicConfig(

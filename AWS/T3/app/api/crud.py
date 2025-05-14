@@ -15,16 +15,13 @@ class LangGraphManager:
         self.states[websocket] = MainState()
 
     async def process_node(self, state: MainState):
-        # 자동 처리 로직
         state["processed"] = True
         return state
 
     async def human_check_node(self, state: MainState):
-        # Human-in-the-loop 필요 상태 설정
         state.requires_human = True
         return state
     
-
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[WebSocket, bool] = {}
@@ -34,12 +31,10 @@ class ConnectionManager:
         current_state = self.lang_graph.states[websocket]
         
         if current_state.requires_human:
-            # Human 입력 처리
             current_state.pending_input = data
             current_state.requires_human = False
             await self.process_workflow(websocket)
         else:
-            # 일반 워크플로우 처리
             await self.process_workflow(websocket, data)
 
     async def process_workflow(self, websocket: WebSocket, data: Optional[str] = None):
@@ -49,7 +44,6 @@ class ConnectionManager:
         if data:
             current_state.workflow_state["input"] = data
         
-        # LangGraph 실행
         new_state = await workflow.arun(current_state)
         
         if new_state.requires_human:

@@ -13,8 +13,7 @@ from langchain.prompts import ChatPromptTemplate
 DEEPL_API_KEY = os.getenv("DEEPL_API_KEY")
 OLLAMA_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 client = httpx.AsyncClient()
-
-
+    
 async def trans_en(text:str) -> str:
     translator = deepl.Translator(DEEPL_API_KEY)
     result = translator.translate_text(text, target_lang="en-us")
