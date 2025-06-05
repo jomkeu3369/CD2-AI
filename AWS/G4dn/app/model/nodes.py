@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any
 from starlette.websockets import WebSocketState, WebSocketDisconnect
 from tavily import TavilyClient
 
-from langchain_openai import ChatOpenAI
+from langchain_community.chat_models import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -20,6 +20,7 @@ from app.model.crud import text_translation, evaluate_text, enhance_prompt, gene
 from app.log import setup_logging
 
 logger: logging.Logger = setup_logging()
+OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 # cot 출력
 async def send_cot_message_to_websocket(config: dict, message: str):
@@ -66,7 +67,12 @@ async def topic_evaluation_node(status: MainState, config: dict) -> Dict[str, An
         Prompt: "{prompt}"
         Provide the relevance score and your reasoning in JSON format.
     """
-    model = ChatOpenAI(model=model_name, max_tokens=4096, temperature=0)
+    model_instance = ChatOllama(
+        model=model_name, 
+        temperature=0, 
+        base_url=OLLAMA_BASE_URL,
+        format="json"
+    )
     system_message_prompt = SystemMessagePromptTemplate.from_template(system_template)
     human_message_prompt = HumanMessagePromptTemplate.from_template(
         user_template,
@@ -74,20 +80,20 @@ async def topic_evaluation_node(status: MainState, config: dict) -> Dict[str, An
         partial_variables={"format_instructions": parser.get_format_instructions()}
     )
     chat_prompt = ChatPromptTemplate.from_messages([system_message_prompt, human_message_prompt])
-    chain = chat_prompt | model | JsonOutputParser()
+    chain = chat_prompt | model_instance | parser 
     
     try:
         generation = await chain.ainvoke(input={"topic": topic, "prompt": initial_prompt})
     except Exception as e:
-        logger.error(f"Error during topic evaluation API call: {e}", exc_info=True)
-        await send_cot_message_to_websocket(config, f"Error during topic evaluation: {e}")
-        return {"is_completed": True, "error_message": f"Failed to evaluate topic relevance: {str(e)}"}
+        logger.error(f"Error during topic evaluation API call with Ollama: {e}", exc_info=True)
+        await send_cot_message_to_websocket(config, f"Error during topic evaluation with Ollama: {e}")
+        return {"is_completed": True, "error_message": f"Failed to evaluate topic relevance with Ollama: {str(e)}"}
         
-    relevance_score = generation.get('relevance_score', 0.0)
+    relevance_score = generation.get('relevance_score', 0.0) if isinstance(generation, dict) else 0.0
     await send_cot_message_to_websocket(config, f"Topic relevance score: {relevance_score:.2f}. Evaluation complete.")
 
     if relevance_score < 0.6:
-        reasoning = generation.get('reasoning', 'The prompt has low relevance to the topic.')
+        reasoning = generation.get('reasoning', 'The prompt has low relevance to the topic.') if isinstance(generation, dict) else 'The prompt has low relevance to the topic.'
         await send_cot_message_to_websocket(config, f"Relevance is too low ({relevance_score:.2f}). Stopping optimization. Reason: {reasoning}")
         return {"is_completed": True, "error_message": reasoning}
         
@@ -116,7 +122,7 @@ async def evaluate_prompt_node(status: MainState, config: dict) -> Dict[str, Any
         await send_cot_message_to_websocket(config, "Error: Translated prompt is missing. Cannot proceed with evaluation.")
         return {"is_completed": True, "error_message": "Translated prompt is missing for evaluation."}
 
-    model = status["model"]
+    model_name = status["model"]
     session_id = config.get("configurable", {}).get("session_id")
 
     await send_cot_message_to_websocket(config, "Starting prompt evaluation based on 6 main criteria (Clarity, Conciseness, etc.)...")
@@ -135,18 +141,18 @@ async def evaluate_prompt_node(status: MainState, config: dict) -> Dict[str, Any
             flat_criteria_list.append((category, kr_criterion, en_criterion))
     
     await send_cot_message_to_websocket(config, f"Calculating scores for a total of {len(en_all_criteria)} detailed items.")
-    results: Dict[str, Dict[str, Any]] = {category_name: {'criteria_results': [], 'average_score': 0.0} for category_name in criteria.keys()}
+    results_agg: Dict[str, Dict[str, Any]] = {category_name: {'criteria_results': [], 'average_score': 0.0} for category_name in criteria.keys()}
     
     try:
-        api_result = await evaluate_text(en_text, en_all_criteria, model)
+        api_result = await evaluate_text(en_text, en_all_criteria, model_name)
     except Exception as e:
-        logger.error(f"Error during prompt evaluation API call: {e}", exc_info=True)
-        await send_cot_message_to_websocket(config, f"Error during API call for evaluation, stopping: {e}")
+        logger.error(f"Error during prompt evaluation (calling evaluate_text): {e}", exc_info=True)
+        await send_cot_message_to_websocket(config, f"Error during call to evaluation function, stopping: {e}")
         return {"is_completed": True, "error_message": f"Error during prompt evaluation: {str(e)}"}
     
     if isinstance(api_result, dict) and 'error' in api_result:
         error_detail = api_result['error']
-        logger.error(f"Error from evaluation API: {error_detail}")
+        logger.error(f"Error from evaluation function: {error_detail}")
         await send_cot_message_to_websocket(config, f"Evaluation failed: {error_detail}")
         return {"is_completed": True, "error_message": f"Prompt evaluation service error: {error_detail}"}
     
@@ -165,32 +171,32 @@ async def evaluate_prompt_node(status: MainState, config: dict) -> Dict[str, Any
         else:
             raw_score = float(eval_item.get("score", 0.0))
             
-        weight = float(current_weights.get(str(i + 1), 1.0)) # Ensure weight is float
+        weight = float(current_weights.get(str(i + 1), 1.0))
         final_score = raw_score * weight
         
         current_evaluation_text = "Satisfied" if final_score > 0.5 else "Not Satisfied"
-        results[category]['criteria_results'].append({
+        results_agg[category]['criteria_results'].append({
             'criterion': init_criterion, 'criterion_en': en_criterion,
             'score': float(final_score),
             'evaluation': current_evaluation_text
         })
 
-    for category_name, category_data in results.items():
+    for category_name, category_data in results_agg.items():
         valid_scores = [item['score'] for item in category_data['criteria_results'] if isinstance(item.get('score'), (int, float))]
         if valid_scores:
             average_category_score_np = np.mean(valid_scores)
-            results[category_name]['average_score'] = float(average_category_score_np)
+            results_agg[category_name]['average_score'] = float(average_category_score_np)
         else:
-            results[category_name]['average_score'] = 0.0
+            results_agg[category_name]['average_score'] = 0.0
             
     await send_cot_message_to_websocket(config, "Prompt evaluation completed successfully.")
-    return {"evaluation_data": results}
+    return {"evaluation_data": results_agg}
 
 # 프롬프트 제안 노드
 async def improvement_prompt_node(status: MainState, config: dict) -> Dict[str, Any]:
     translated_prompt = status.get("translated_prompt")
     evaluation_data = status.get("evaluation_data")
-    model = status["model"]
+    model_name = status["model"]
 
     if not translated_prompt or not evaluation_data:
         logger.warning("Missing translated prompt or evaluation data for improvement generation.")
@@ -215,20 +221,20 @@ async def improvement_prompt_node(status: MainState, config: dict) -> Dict[str, 
     
     if vulnerable_categories_names:
         await send_cot_message_to_websocket(config, f"Generating suggestions for {len(vulnerable_categories_names)} items needing improvement.")
-        tasks = [enhance_prompt(translated_prompt, vulnerable_category, model) for vulnerable_category in vulnerable_categories_names]
+        tasks = [enhance_prompt(translated_prompt, vulnerable_category, model_name) for vulnerable_category in vulnerable_categories_names] 
         try:
             results_from_gather = await asyncio.gather(*tasks, return_exceptions=True)
             for result_item in results_from_gather:
-                if not isinstance(result_item, Exception) and isinstance(result_item, dict):
+                if not isinstance(result_item, Exception) and isinstance(result_item, dict) and "error" not in result_item :
                     suggestions.update(result_item)
-                
+                elif isinstance(result_item, dict) and "error" in result_item:
+                     logger.error(f"Error from enhance_prompt task: {result_item['error']}")
                 elif isinstance(result_item, Exception):
-                    logger.error(f"Error in enhance_prompt task: {result_item}", exc_info=result_item)
+                    logger.error(f"Exception in enhance_prompt task: {result_item}", exc_info=result_item)
         
         except Exception as e:
             logger.error(f"Error during asyncio.gather for enhance_prompt: {e}", exc_info=True)
             await send_cot_message_to_websocket(config, f"Error generating some improvement suggestions: {e}")
-
     else:
         await send_cot_message_to_websocket(config, "The prompt meets all criteria; no additional improvements are needed.")
 
@@ -257,7 +263,7 @@ async def enhance_prompt_node(status: MainState, config: dict) -> Dict[str, Any]
     
     english_context_prompt = status.get("translated_prompt")
     improvement_suggestions = status.get("improvement_suggestions", {})
-    model = status["model"]
+    model_name = status["model"]
     
     if not english_context_prompt:
         error_msg = "Error: Translated prompt is missing, cannot generate final prompt."
@@ -272,7 +278,7 @@ async def enhance_prompt_node(status: MainState, config: dict) -> Dict[str, Any]
     korean_optimized_prompt = ""
     try:
         stream_type = "optimize" 
-        async for chunk in generate_final_prompt(english_context_prompt, combined_enhancements, model):
+        async for chunk in generate_final_prompt(english_context_prompt, combined_enhancements, model_name):
             korean_optimized_prompt += chunk
             if websocket and websocket.client_state == WebSocketState.CONNECTED:
                 try:
@@ -309,8 +315,8 @@ async def stream_error_node(status: MainState, config: dict) -> Dict[str, Any]:
 
 # Human in the loop 요청 노드
 async def hitl_request_node(status: MainState, config: dict) -> Dict[str, Any]:
-    model_name = status["model"]
-    prompt = status["initial_prompt"]
+    model_name = status["model"] 
+    prompt_text = status["initial_prompt"] 
     websocket = config.get("configurable", {}).get("websocket")
 
     if not websocket or websocket.client_state != WebSocketState.CONNECTED:
@@ -319,7 +325,14 @@ async def hitl_request_node(status: MainState, config: dict) -> Dict[str, Any]:
 
     try:
         await send_cot_message_to_websocket(config, "Generating a question for user feedback (Human-in-the-Loop)...")
-        hitl_question = await human_in_the_loop_prompt(text=prompt, model_name=model_name)
+        hitl_response = await human_in_the_loop_prompt(text=prompt_text, model_name=model_name) 
+        
+        if "error" in hitl_response:
+            hitl_question = f"Could not generate HITL question: {hitl_response['error']}"
+            logger.error(hitl_question)
+        else:
+            hitl_question = hitl_response.get("question", "Could not generate a specific question at this time.")
+
         await websocket.send_json({"type": "hitl", "text": hitl_question})
         await send_cot_message_to_websocket(config, "Question for user feedback sent.")
         return {'human_feedback_ai': hitl_question}
@@ -331,7 +344,7 @@ async def hitl_request_node(status: MainState, config: dict) -> Dict[str, Any]:
             try:
                 await websocket.send_json({"type": "error", "text": f"Failed to generate HITL question: {str(e)}"})
             except Exception as ws_e:
-                 logger.error(f"Failed to send HITL error to WebSocket: {ws_e}", exc_info=True)
+                logger.error(f"Failed to send HITL error to WebSocket: {ws_e}", exc_info=True)
         return {}
 
 # ------------------------------
@@ -339,8 +352,7 @@ async def hitl_request_node(status: MainState, config: dict) -> Dict[str, Any]:
 # ------------------------------
 
 # Tree of Thoughts 생각 서브 함수
-async def async_invoke_llm_for_tot(llm: ChatOpenAI, system_prompt: str, human_prompt: str, temperature: float = 0.7) -> str:
-    """Invokes LLM asynchronously for Tree of Thoughts."""
+async def async_invoke_llm_for_tot(llm: ChatOllama, system_prompt: str, human_prompt: str, temperature: float = 0.7) -> str:
     try:
         response = await llm.ainvoke([
             SystemMessage(content=system_prompt),
@@ -354,7 +366,7 @@ async def async_invoke_llm_for_tot(llm: ChatOpenAI, system_prompt: str, human_pr
         return error_message
 
 # Tree of Thoughts 생각 평가 함수
-async def evaluate_thought_with_llm_for_tot(llm_judge: ChatOpenAI, thought_text: str, main_prompt: str) -> tuple[float, str]:
+async def evaluate_thought_with_llm_for_tot(llm_judge: ChatOllama, thought_text: str, main_prompt: str) -> tuple[float, str]:
     system_prompt = (
         "You are an impartial evaluator AI that rates the quality of a 'thought' based on given criteria and assigns a score. "
         "The score must be an integer between 0 and 100. "
@@ -383,7 +395,7 @@ async def evaluate_thought_with_llm_for_tot(llm_judge: ChatOpenAI, thought_text:
         
         if score_match:
             score_val = int(score_match.group(1))
-            score = float(max(0, min(100, score_val))) # Clamp score between 0 and 100
+            score = float(max(0, min(100, score_val)))
         else:
             logger.warning(f"Could not parse score from LLM evaluation. Response: {raw_evaluation}")
 
@@ -448,7 +460,6 @@ async def dr_initializer_node(state: MainState) -> Dict[str, Any]:
     elif not original_prompt_for_search:
         logger.warning("Original prompt for search is empty. Skipping Tavily search.")
 
-
     root_thought_text = f"Initial considerations for '{original_prompt_for_search}'"
     root_thought_id = str(uuid.uuid4())
     root_thought: Thought = {
@@ -456,23 +467,21 @@ async def dr_initializer_node(state: MainState) -> Dict[str, Any]:
         "depth": 0, "parent_id": None, "path_string": root_thought_text[:30]+"..."
     }
     report_state['dr_active_thoughts'] = [root_thought]
-    report_state['dr_all_generated_thoughts'].append(root_thought)
+    report_state.setdefault('dr_all_generated_thoughts', []).append(root_thought)
     report_state['dr_selected_best_thought'] = root_thought
     logger.info("Detailed Report (ToT) state initialized.")
     return {"report_data": report_state}
 
 # Tree of Thoughts 생각 생성 노드
 async def dr_thought_generator_node(state: MainState) -> Dict[str, Any]:
-    """Generates new thoughts based on active thoughts in the Tree of Thoughts."""
     report_state = state["report_data"].copy() if state.get("report_data") else {}
     if not report_state:
         logger.error("Report data is missing in dr_thought_generator_node.")
         return {"report_data": {"dr_generated_for_evaluation": []}}
 
-    model = state['model']
+    model_name = state['model']
     newly_generated_thoughts: List[Thought] = []
     optimized_prompt = state.get('optimized_prompt', state.get('initial_prompt', ''))
-
 
     if not report_state.get('dr_active_thoughts'):
         logger.info("No active thoughts to expand. Skipping thought generation.")
@@ -480,9 +489,9 @@ async def dr_thought_generator_node(state: MainState) -> Dict[str, Any]:
         return {"report_data": report_state}
     
     try:
-        llm_generator = ChatOpenAI(model=model, temperature=0.7)
+        llm_generator = ChatOllama(model=model_name, temperature=0.7, base_url=OLLAMA_BASE_URL)
     except Exception as e:
-        logger.error(f"Failed to initialize LLM generator: {e}", exc_info=True)
+        logger.error(f"Failed to initialize Ollama LLM generator: {e}", exc_info=True)
         report_state['dr_generated_for_evaluation'] = []
         return {"report_data": report_state}
 
@@ -528,13 +537,12 @@ async def dr_thought_generator_node(state: MainState) -> Dict[str, Any]:
 
 # Tree of Thoughts 생각 평가 노드
 async def dr_evaluator_node(state: MainState) -> Dict[str, Any]:
-    """Evaluates generated thoughts in the Tree of Thoughts."""
     report_state = state["report_data"].copy() if state.get("report_data") else {}
     if not report_state:
         logger.error("Report data is missing in dr_evaluator_node.")
         return {"report_data": {}} 
 
-    model = state['model']
+    model_name = state['model']
     optimized_prompt = state.get('optimized_prompt', state.get('initial_prompt', ''))
     
     evaluated_thoughts_for_current_depth: List[Thought] = []
@@ -547,14 +555,14 @@ async def dr_evaluator_node(state: MainState) -> Dict[str, Any]:
     
     logger.info(f"Evaluating {len(thoughts_to_evaluate)} thoughts...")
     try:
-        llm_judge = ChatOpenAI(model=model, temperature=0.2)
+        llm_judge = ChatOllama(model=model_name, temperature=0.2, base_url=OLLAMA_BASE_URL)
     except Exception as e:
-        logger.error(f"Failed to initialize LLM judge: {e}", exc_info=True)
+        logger.error(f"Failed to initialize Ollama LLM judge: {e}", exc_info=True)
         for thought_draft in thoughts_to_evaluate:
             evaluated_thought = {**thought_draft, 'score': 0.0, 'reasoning': "Judge LLM initialization failed"}
             evaluated_thoughts_for_current_depth.append(evaluated_thought)
         report_state['dr_active_thoughts'] = [] 
-        report_state['dr_all_generated_thoughts'].extend(evaluated_thoughts_for_current_depth)
+        report_state.setdefault('dr_all_generated_thoughts', []).extend(evaluated_thoughts_for_current_depth)
         return {"report_data": report_state}
 
     evaluation_tasks = []
@@ -601,7 +609,6 @@ async def dr_evaluator_node(state: MainState) -> Dict[str, Any]:
 
 # Tree of Thoughts 컨트롤 노드
 async def dr_tot_control_node(state: MainState) -> Dict[str, Any]:
-    """Controls the depth and flow of the Tree of Thoughts process."""
     report_state = state["report_data"].copy() if state.get("report_data") else {}
     if not report_state:
         logger.error("Report data is missing in dr_tot_control_node.")
@@ -686,8 +693,12 @@ async def dr_markdown_report_generator_node(state: MainState, config: dict) -> D
     else:
         logger.warning("TAVILY_API_KEY not set. Skipping web search for report.")
 
-
-    llm_report_writer = ChatOpenAI(model=model_name, temperature=0.7, streaming=True, max_tokens=4000) # Adjusted max_tokens
+    llm_report_writer = ChatOllama(
+        model=model_name, 
+        temperature=0.7, 
+        streaming=True, 
+        base_url=OLLAMA_BASE_URL
+    )
     
     system_prompt = """
     You are an AI writer specializing in creating professional analytical reports. 
@@ -723,7 +734,7 @@ async def dr_markdown_report_generator_node(state: MainState, config: dict) -> D
     chain = prompt_template | llm_report_writer | StrOutputParser()
 
     full_report = ""
-    logger.info("Streaming detailed report to WebSocket...")
+    logger.info("Streaming detailed report to WebSocket using Ollama...")
     try:
         async for chunk in chain.astream({}):
             full_report += chunk
@@ -732,7 +743,7 @@ async def dr_markdown_report_generator_node(state: MainState, config: dict) -> D
                     await websocket.send_json({"type": "result", "text": chunk})
                 except Exception as e:
                     logger.warning(f"Failed to stream report chunk to WebSocket: {e}", exc_info=True)
-        logger.info("Detailed report streaming complete.")
+        logger.info("Detailed report streaming with Ollama complete.")
     
     except WebSocketDisconnect:
         logger.warning("WebSocket disconnected during report streaming.")
@@ -740,17 +751,17 @@ async def dr_markdown_report_generator_node(state: MainState, config: dict) -> D
         return {"report_data": report_state, "is_completed": True, "error_message": "WebSocket disconnected during report generation."}
     
     except Exception as e:
-        logger.error(f"Error during report generation streaming: {e}", exc_info=True)
+        logger.error(f"Error during report generation streaming with Ollama: {e}", exc_info=True)
         if websocket and websocket.client_state == WebSocketState.CONNECTED:
             try:
                 await websocket.send_json({"type": "error", "text": "A server error occurred during report generation."})
             except Exception as ws_e:
                 logger.error(f"Failed to send report error to WebSocket: {ws_e}", exc_info=True)
         report_state['detailed_markdown_report'] = full_report
-        return {"report_data": report_state, "is_completed": True, "error_message": f"Error generating report: {str(e)}"}
+        return {"report_data": report_state, "is_completed": True, "error_message": f"Error generating report with Ollama: {str(e)}"}
 
     report_state['detailed_markdown_report'] = full_report.strip()
-    logger.info("Detailed markdown report generation finished successfully.")
+    logger.info("Detailed markdown report generation with Ollama finished successfully.")
     
     return {"report_data": report_state, "is_completed": True}
 

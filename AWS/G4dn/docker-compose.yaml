@@ -21,8 +21,8 @@ services:
     restart: unless-stopped
 
   fastapi:
-    build:
-      context: .
+    build: .
+    container_name: backend
     ports:
       - "8000:8080"
     env_file:
@@ -36,8 +36,6 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    volumes:
-      - huggingface_cache:/root/.cache/huggingface
     restart: unless-stopped
 
 networks:

@@ -1,9 +1,29 @@
-from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
+from pydantic import BaseModel
 
-class OptimizeRequest(BaseModel):
-    prompt: str = Field(..., description="최적화할 원본 한국어 프롬프트", example="windows10 환경 변수 설정 방법 알려줘")
-    topic: str
+model_list = [
+        {
+            "id": 0,
+            "name" : "gpt-4o-mini",
+            "type": "api"
+        },
+        {
+            "id": 1,
+            "name" : "gpt-4o",
+            "type": "api"
+        },
+        {
+            "id": 2,
+            "name" : "gpt-4.1",
+            "type": "api"
+        },
+        {
+            "id": 3,
+            "name" : "gpt-4.1-mini",
+            "type": "api"
+        }
+    ]
 
-class OptimizeResponse(BaseModel):               
-    enhanced_prompt: str                 # 최적화된 프롬프트
+class ReinforceRequest(BaseModel):
+    token: str
+    message_id: str
+    recommand: bool

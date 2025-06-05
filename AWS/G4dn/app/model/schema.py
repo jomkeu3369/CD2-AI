@@ -1,15 +1,80 @@
-from typing import TypedDict, Dict, Any, List
+from typing import TypedDict, Dict, Any, List, Optional
+from langchain_core.pydantic_v1 import BaseModel, Field
+
+class Evaluation(BaseModel):
+    criterion: str = Field(..., description="Evaluation criterion text")
+    score: float = Field(..., ge=0.0, le=1.0, description="A confidence score between 0.0 and 1.0")
+
+class EvaluationResponse(BaseModel):
+    evaluations: List[Evaluation] = Field(..., description="List of evaluation results by criteria")
+
+class TopicEvaluation(BaseModel):
+    topic: str = Field(description="Topics to evaluate (e.g., gaming, movies, travel, etc.)")
+    prompt: str = Field(description="Evaluation Target prompt text")
+    relevance_score: float = Field(
+        description="A relevance score between 0.00 and 1.00. Up to two decimal places",
+        ge=0.0,
+        le=1.0,
+        example=0.75,
+    )
+    reasoning: str = Field(description="A 2-3 sentence description of the relevance score")
+
+class Thought(TypedDict):
+    id: str
+    text: str
+    score: float
+    reasoning: Optional[str] 
+    depth: int
+    parent_id: Optional[str]
+    path_string: str
+
+class CriterionResult(TypedDict):
+    criterion: str
+    criterion_en: str
+    score: float
+    evaluation: str
+
+class CategoryEvaluation(TypedDict):
+    criteria_results: List[CriterionResult] 
+    average_score: float
+
+EvaluationData = Dict[str, CategoryEvaluation]
+
+class ReportState(TypedDict):
+    dr_tavily_initial_context: Optional[str]
+    dr_active_thoughts: List[Thought]
+    dr_all_generated_thoughts: List[Thought]
+    dr_selected_best_thought: Optional[Thought]
+    dr_current_depth: int
+    dr_max_depth: int
+    dr_thoughts_per_expansion: int
+    dr_top_k_to_keep: int
+    dr_generated_for_evaluation: List[Thought]
+    detailed_markdown_report: Optional[str]
 
 class MainState(TypedDict):
-    original_prompt: str                     # 원본 프롬프트
-    evaluation_data: Dict[str, Any]          # 평가 데이터
-    weak_categories: List[str]               # 취약 카테고리
-    improvement_suggestions: Dict[str, str]  # 개선 제안
-    enhanced_prompt: str                     # 개선된 프롬프트
-    execution_log: List[Dict[str, Any]]      # 실행 로그
-    exit: bool                                  
-
-criteria = {
+    user_id: str
+    token: str
+    initial_prompt: str
+    translated_prompt: Optional[str]
+    optimized_prompt: Optional[str]
+    is_completed: bool
+    evaluation_data: Optional[EvaluationData]
+    final_evaluation_data: Optional[Dict[str, Any]]
+    improvement_suggestions: Optional[Dict[str, str]]
+    human_feedback_ai: Optional[str]
+    human_feedback: Optional[str]
+    model: str
+    topic: str
+    error_message: Optional[str]
+    generate_detailed_report: bool
+    needs_web_search: bool
+    web_search_data: Optional[List[Dict[str, Any]]]
+    has_file_upload: bool
+    uploaded_files: Optional[List[Dict[str, Any]]]
+    report_data: Optional[ReportState]
+    
+criteria: Dict[str, List[tuple[str, str]]] = {
     "명확성": [
         ("문장이 명확한가?", "is clear and unambiguous"),
         ("모호성이 없는가?", "has no ambiguity"),

@@ -1,11 +1,17 @@
 version: '3.8'
 
 services:
-  fastapi:
+  backend:
     build: .
-    container_name: fastapi
+    container_name: backend
     ports:
       - "8000:8080"
     env_file:
       - .env
     restart: unless-stopped
+    networks:
+      - app_network
+
+networks:
+  app_network:
+    external: true
